@@ -33,7 +33,7 @@ torch
 
 ## Running
 
-Should be 
+Should be able to install all the requirements and run the code via 'python3 run_app.py'
 
 
 ## License
