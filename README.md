@@ -1,11 +1,11 @@
 # Project
 
-This repository contains the code you shared. Below are universal setup steps so anyone can run it.
+Below are universal setup steps so anyone can run this program.
 
 ## Quickstart
 
 ```bash
-git clone <YOUR_REPO_URL>.git
+git clone https://github.com/fulsdavid/mregion.git
 cd <REPO_NAME>
 python3 -m venv .venv
 source .venv/bin/activate  # on Windows: .venv\Scripts\activate
@@ -22,44 +22,23 @@ python run_app.py
 
 ## Requirements
 
-Dependencies were inferred by scanning imports across the codebase and written to `requirements.txt`. If you know precise versions, pin them there.
+Pillow
+PyQt6
+matplotlib
+numpy
+pyqtgraph
+pyvips
+tifffile
+torch
 
 ## Running
 
-Explain how to run the application here (replace `run_app.py` with the actual entry point).
-If there are environment variables or data files needed, document them here.
+Should be 
 
-## Development
-
-- Use a virtual environment (`python -m venv .venv`).
-- Install dev tools (optional): `pip install black ruff pytest`
-
-## Contributing
-
-1. Fork the repo
-2. Create a feature branch: `git checkout -b feature/my-change`
-3. Commit your changes: `git commit -m "Describe change"`
-4. Push: `git push origin feature/my-change`
-5. Open a Pull Request
 
 ## License
 
-Choose a license (MIT recommended for simplicity). Add a `LICENSE` file accordingly.
-
-## Publishing to GitHub (one-time)
-
-1. Create a new empty repository on GitHub (no README/gitignore/license).
-2. Locally:
-   ```bash
-   cd <REPO_ROOT>
-   git init -b main
-   git add .
-   git commit -m "Initial commit"
-   git remote add origin https://github.com/<your-user>/<repo>.git
-   git push -u origin main
-   ```
-3. If the repo already exists with content, use `git pull --rebase origin main` before pushing.
-
+MIT
 
 ### GUI requirements (PyQt)
 
