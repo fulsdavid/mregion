@@ -1,0 +1,218 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import List, Tuple, Optional, Dict, Any
+import json
+import numpy as np
+
+from PyQt6 import QtCore, QtGui, QtWidgets
+from PyQt6.QtCore import Qt
+
+# Use same fast PyQtGraph display as Annotate
+from ..ui.fast_image import FastImageCanvas
+from ..common.utils import load_tiff_preview
+
+
+# --- Display only overlay items --------------------------------------------
+
+class DisplayPolygon(QtWidgets.QGraphicsPathItem):
+    """Closed (filled) region polygon for display only"""
+    def __init__(self, pts: List[Tuple[float, float]],
+                 color: Tuple[float, float, float, float] = (1, 0, 0, 0.9),
+                 width: int = 2,
+                 closed: bool = True,
+                 z: float = 10):
+        super().__init__()
+        r, g, b, a = color
+        pen = QtGui.QPen(QtGui.QColor.fromRgbF(r, g, b, a), width)
+        pen.setCosmetic(True)
+        self.setPen(pen)
+        if closed:
+            self.setBrush(QtGui.QBrush(QtGui.QColor.fromRgbF(r, g, b, min(0.3, a * 0.5))))
+        else:
+            self.setBrush(QtCore.Qt.GlobalColor.transparent)
+        self.setZValue(z)
+
+        path = QtGui.QPainterPath()
+        if pts:
+            path.moveTo(*pts[0])
+            for p in pts[1:]:
+                path.lineTo(*p)
+            if closed:
+                path.closeSubpath()
+        self.setPath(path)
+
+
+class DisplayPolyline(DisplayPolygon):
+    """Polyline for display only (e.g. boundary, scale, measurement)"""
+    def __init__(self, pts, color=(0, 1, 0, 1), width=2, z=12):
+        super().__init__(pts, color=color, width=width, closed=False, z=z)
+
+
+# --- Analysis Tab ----------------------------------------------------------
+
+class AnalysisTab(QtWidgets.QWidget):
+
+    def __init__(self):
+        super().__init__()
+        self.image_path: Optional[Path] = None
+        self.base_img: Optional[np.ndarray] = None
+        self.image_size = (0, 0)
+        self.annotations: Dict[str, Any] = {}
+
+        # UI layout ---------------------------------------------------------
+        root = QtWidgets.QVBoxLayout(self)
+
+        hb = QtWidgets.QHBoxLayout()
+        self.btn_open = QtWidgets.QPushButton("Open Image…")
+        self.btn_load_annotations = QtWidgets.QPushButton("Load Annotations…")
+        self.btn_clear = QtWidgets.QPushButton("Clear Overlays")
+        hb.addWidget(self.btn_open)
+        hb.addWidget(self.btn_load_annotations)
+        hb.addStretch(1)
+        hb.addWidget(self.btn_clear)
+        root.addLayout(hb)
+
+        # Shared FastImageCanvas used in Annotate
+        self.canvas = FastImageCanvas()
+        self.toolbar = self.canvas.make_toolbar(self)
+        root.addWidget(self.toolbar)
+        root.addWidget(self.canvas, 1)
+
+        # Status console
+        self.txt_log = QtWidgets.QPlainTextEdit()
+        self.txt_log.setReadOnly(True)
+        self.txt_log.setMaximumHeight(160)
+        root.addWidget(self.txt_log)
+
+        # Overlay storage
+        self._regions: List[QtWidgets.QGraphicsPathItem] = []
+        self._boundary: Optional[QtWidgets.QGraphicsPathItem] = None
+        self._scale: Optional[QtWidgets.QGraphicsPathItem] = None
+        self._measures: List[QtWidgets.QGraphicsPathItem] = []
+
+        # Connect buttons
+        self.btn_open.clicked.connect(self._on_open_image)
+        self.btn_load_annotations.clicked.connect(self._on_load_ann)
+        self.btn_clear.clicked.connect(self._clear_overlays)
+
+    # --- Helpers ---------------------------------------------------------
+
+    def _log(self, msg: str):
+        self.txt_log.appendPlainText(msg)
+
+    # --- Image Load ------------------------------------------------------
+
+    def _on_open_image(self):
+        p, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Open image", str(Path.cwd()),
+            "Images (*.tif *.tiff *.png *.jpg)"
+        )
+        if not p:
+            return
+        self.image_path = Path(p)
+
+        arr, _, (H, W) = load_tiff_preview(self.image_path, max_side=4096)
+        self.base_img = arr
+        self.image_size = (H, W)
+
+        self.canvas.set_image(arr, extent=(0, W, H, 0))
+        self._log(f"Loaded: {self.image_path.name} [{W}x{H}]")
+
+        # If annotations already loaded → redraw on top
+        if self.annotations:
+            self._draw_annotations()
+
+    # --- Annotations Load -------------------------------------------------
+
+    def _on_load_ann(self):
+        p, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Load Annotations", str(Path.cwd()),
+            "JSON (*.json)"
+        )
+        if not p:
+            return
+
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                ann = json.load(f)
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(self, "Error",
+                                          f"Failed to read file:\n{e}")
+            return
+
+        self.annotations = ann or {}
+        self._log(f"Annotations loaded: {Path(p).name}")
+        self._draw_annotations()
+
+    # --- Clearing Overlays -----------------------------------------------
+
+    def _clear_overlays(self):
+        vb = self.canvas._vb
+        for item in self._regions:
+            vb.removeItem(item)
+        self._regions.clear()
+
+        if self._boundary:
+            vb.removeItem(self._boundary)
+            self._boundary = None
+
+        if self._scale:
+            vb.removeItem(self._scale)
+            self._scale = None
+
+        for item in self._measures:
+            vb.removeItem(item)
+        self._measures.clear()
+
+        self._log("Overlays cleared.")
+
+    # --- Drawing overlays ------------------------------------------------
+
+    def _draw_annotations(self):
+        if not self.annotations:
+            return
+
+        self._clear_overlays()
+        vb = self.canvas._vb
+
+        # Regions
+        for reg in self.annotations.get("regions", []):
+            pts = [(float(x), float(y)) for x, y in reg.get("points", [])]
+            col = tuple(reg.get("color", (1, 0, 0, 0.9)))
+            item = DisplayPolygon(pts, color=col, closed=True, width=2, z=15)
+            vb.addItem(item)
+            self._regions.append(item)
+
+        # Boundary
+        b = self.annotations.get("boundary")
+        if b and b.get("points"):
+            pts = [(float(x), float(y)) for x, y in b.get("points")]
+            item = DisplayPolyline(pts, color=(0.2, 0.7, 1, 1), width=2, z=18)
+            vb.addItem(item)
+            self._boundary = item
+
+        # Scale
+        s = self.annotations.get("scale")
+        if s and s.get("p1") and s.get("p2"):
+            p1 = tuple(map(float, s["p1"]))
+            p2 = tuple(map(float, s["p2"]))
+            item = DisplayPolyline([p1, p2], color=(0, 1, 0, 1), width=2, z=20)
+            vb.addItem(item)
+            self._scale = item
+
+        # Measurements
+        for m in self.annotations.get("measurements", []):
+            p1 = tuple(map(float, m.get("p1", [0, 0])))
+            p2 = tuple(map(float, m.get("p2", [0, 0])))
+            item = DisplayPolyline([p1, p2], color=(1, 0.5, 0, 1), width=2, z=16)
+            vb.addItem(item)
+            self._measures.append(item)
+
+        # Adjust view
+        try:
+            self.canvas.fit_to_image()
+        except Exception:
+            pass
+
+        self._log("Overlay drawing complete.")
